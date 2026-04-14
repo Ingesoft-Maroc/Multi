@@ -1,0 +1,99 @@
+import streamlit as st
+
+st.set_page_config(
+    page_title="HeroTool",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ---------- CSS ----------
+st.markdown("""
+<style>
+    [data-testid="stSidebar"] {
+        background: #1a1a2e;
+    }
+    [data-testid="stSidebar"] * {
+        color: #e0e0e0 !important;
+    }
+    .hero-title {
+        font-size: 2.4rem;
+        font-weight: 800;
+        background: linear-gradient(135deg, #6366f1, #8b5cf6, #ec4899);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 0;
+    }
+    .hero-subtitle {
+        color: #9ca3af;
+        font-size: 1rem;
+        margin-top: 0;
+    }
+    .tool-card {
+        border: 1px solid #374151;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin: 0.5rem 0;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .tool-card:hover {
+        border-color: #6366f1;
+        background: #1e1b4b22;
+    }
+    div[data-testid="stButton"] > button {
+        border-radius: 8px;
+        font-weight: 600;
+        transition: all 0.2s;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ---------- Session state ----------
+if "active_tool" not in st.session_state:
+    st.session_state.active_tool = None
+
+# ---------- Sidebar ----------
+with st.sidebar:
+    st.markdown("## ⚡ HeroTool")
+    st.markdown("---")
+    st.markdown("### 🧰 Mini-outils")
+
+    tools = {
+        "reconciler": ("🔗", "Réconciliateur"),
+    }
+
+    for key, (icon, label) in tools.items():
+        if st.button(f"{icon} {label}", key=f"nav_{key}", use_container_width=True):
+            st.session_state.active_tool = key
+
+    st.markdown("---")
+    if st.session_state.active_tool:
+        if st.button("🏠 Accueil", use_container_width=True):
+            st.session_state.active_tool = None
+
+# ---------- Main content ----------
+if st.session_state.active_tool is None:
+    # Home page
+    st.markdown('<p class="hero-title">⚡ HeroTool</p>', unsafe_allow_html=True)
+    st.markdown('<p class="hero-subtitle">Votre boîte à outils pour les tâches répétitives</p>', unsafe_allow_html=True)
+    st.markdown("---")
+
+    st.markdown("### Choisissez un outil :")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("""
+        <div class="tool-card">
+            <h3>🔗 Réconciliateur</h3>
+            <p style="color:#9ca3af;">Rapprochez deux fichiers Excel en quelques clics.
+            Choisissez vos colonnes clés et configurez la sortie.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("Ouvrir →", key="open_reconciler"):
+            st.session_state.active_tool = "reconciler"
+            st.rerun()
+
+elif st.session_state.active_tool == "reconciler":
+    from tools.reconciler import run_reconciler
+    run_reconciler()
