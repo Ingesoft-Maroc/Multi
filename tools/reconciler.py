@@ -54,6 +54,17 @@ def build_concat_value(matched_rows, cols, col_sep, row_sep):
     return row_sep.join(parts)
 
 
+def _apply_col_filters(df_b, col_filters):
+    """Apply per-column exclusion filters on df_b, return filtered copy."""
+    df = df_b.copy()
+    for f in col_filters:
+        col_f = f.get("col")
+        vals_f = f.get("values", [])
+        if col_f and col_f in df.columns and vals_f:
+            df = df[~df[col_f].astype(str).isin(vals_f)]
+    return df
+
+
 def build_sum_value(matched_rows, col):
     try:
         vals = pd.to_numeric(matched_rows[col], errors="coerce").dropna()
@@ -236,8 +247,8 @@ def run_reconciler():
         # ── FILTRES D'EXCLUSION ───────────────
         with st.expander("🚫 Filtres d'exclusion (optionnel)", expanded=False):
             st.markdown(
-                "Exclure des lignes du **fichier de base** selon la valeur d'une colonne. "
-                "Les lignes exclues n'apparaissent pas dans le résultat."
+                f"Exclure des lignes du **{name_b}** avant le rapprochement. "
+                "Les lignes exclues du fichier B ne seront jamais matchées."
             )
             exclusions = st.session_state.get("rec_exclusions", [])
 
@@ -245,13 +256,13 @@ def run_reconciler():
                 c1, c2 = st.columns([2, 3])
                 with c1:
                     excl["col"] = st.selectbox(
-                        f"Colonne {idx+1}", list(df_a.columns),
-                        index=list(df_a.columns).index(excl["col"])
-                              if excl["col"] in df_a.columns else 0,
+                        f"Colonne {idx+1}", list(df_b.columns),
+                        index=list(df_b.columns).index(excl["col"])
+                              if excl["col"] in df_b.columns else 0,
                         key=f"rec_excl_col_{idx}",
                     )
                 with c2:
-                    unique_vals = sorted(df_a[excl["col"]].dropna().astype(str).unique().tolist())
+                    unique_vals = sorted(df_b[excl["col"]].dropna().astype(str).unique().tolist())
                     excl["values"] = st.multiselect(
                         f"Valeurs à exclure",
                         options=unique_vals,
@@ -265,7 +276,7 @@ def run_reconciler():
                 st.markdown("---")
 
             if st.button("➕ Ajouter un filtre d'exclusion"):
-                exclusions.append({"col": list(df_a.columns)[0], "values": []})
+                exclusions.append({"col": list(df_b.columns)[0], "values": []})
                 st.session_state["rec_exclusions"] = exclusions
                 st.rerun()
             st.session_state["rec_exclusions"] = exclusions
@@ -321,11 +332,6 @@ def run_reconciler():
                             "Séparateur entre lignes matchées", value=spec.get("row_sep", " // "),
                             key=f"rec_spec_rowsep_{idx}",
                         )
-                    if spec["cols"] and len(df_a[key_a].dropna()) > 0:
-                        sv = str(df_a[key_a].dropna().iloc[0])
-                        m = find_matching_rows(df_b, key_b, sv, match_mode, case_sensitive)
-                        prev = build_concat_value(m, spec["cols"], spec["col_sep"], spec["row_sep"])
-                        st.caption(f"Aperçu pour \"{sv}\" → `{prev[:100]}{'...' if len(prev)>100 else ''}`")
 
                 # ── SUM ──
                 elif stype == "sum":
@@ -336,11 +342,6 @@ def run_reconciler():
                               if spec.get("sum_col") in num_cols else 0,
                         key=f"rec_spec_sumcol_{idx}",
                     )
-                    if spec.get("sum_col") and len(df_a[key_a].dropna()) > 0:
-                        sv = str(df_a[key_a].dropna().iloc[0])
-                        m = find_matching_rows(df_b, key_b, sv, match_mode, case_sensitive)
-                        total = build_sum_value(m, spec["sum_col"])
-                        st.caption(f"Aperçu pour \"{sv}\" → somme = `{total}`")
 
                 # ── CONDITION ──
                 elif stype == "condition":
@@ -422,6 +423,57 @@ def run_reconciler():
                             key=f"rec_spec_else_{idx}",
                         )
 
+                # ── FILTRES D'EXCLUSION PAR COLONNE ──
+                st.markdown("---")
+                st.markdown(f"**🚫 Filtres d'exclusion sur {name_b}** *(pour cette colonne uniquement)*")
+                col_filters = spec.get("col_filters", [])
+
+                for fi, cf in enumerate(col_filters):
+                    fc1, fc2 = st.columns([2, 3])
+                    with fc1:
+                        cf["col"] = st.selectbox(
+                            f"Colonne B #{fi+1}", list(df_b.columns),
+                            index=list(df_b.columns).index(cf["col"])
+                                  if cf.get("col") in df_b.columns else 0,
+                            key=f"rec_cf_col_{idx}_{fi}",
+                        )
+                    with fc2:
+                        unique_vals = sorted(df_b[cf["col"]].dropna().astype(str).unique().tolist())
+                        cf["values"] = st.multiselect(
+                            "Valeurs à exclure",
+                            options=unique_vals,
+                            default=[v for v in cf.get("values", []) if v in unique_vals],
+                            key=f"rec_cf_vals_{idx}_{fi}",
+                        )
+                    if st.button("✕ Supprimer filtre", key=f"rec_del_cf_{idx}_{fi}"):
+                        col_filters.pop(fi)
+                        spec["col_filters"] = col_filters
+                        st.session_state["rec_special_cols"] = special_cols
+                        st.rerun()
+
+                if st.button("➕ Ajouter un filtre", key=f"rec_add_cf_{idx}"):
+                    col_filters.append({"col": list(df_b.columns)[0], "values": []})
+                    spec["col_filters"] = col_filters
+                    st.session_state["rec_special_cols"] = special_cols
+                    st.rerun()
+
+                spec["col_filters"] = col_filters
+
+                # ── Aperçu ──
+                st.markdown("")
+                if stype == "concat" and spec.get("cols") and len(df_a[key_a].dropna()) > 0:
+                    sv = str(df_a[key_a].dropna().iloc[0])
+                    df_b_prev = _apply_col_filters(df_b, col_filters)
+                    m = find_matching_rows(df_b_prev, key_b, sv, match_mode, case_sensitive)
+                    prev = build_concat_value(m, spec["cols"], spec["col_sep"], spec["row_sep"])
+                    st.caption(f"Aperçu pour \"{sv}\" → `{prev[:100]}{'...' if len(prev)>100 else ''}`")
+                elif stype == "sum" and spec.get("sum_col") and len(df_a[key_a].dropna()) > 0:
+                    sv = str(df_a[key_a].dropna().iloc[0])
+                    df_b_prev = _apply_col_filters(df_b, col_filters)
+                    m = find_matching_rows(df_b_prev, key_b, sv, match_mode, case_sensitive)
+                    total = build_sum_value(m, spec["sum_col"])
+                    st.caption(f"Aperçu pour \"{sv}\" → somme = `{total}`")
+
                 if st.button("🗑️ Supprimer cette colonne", key=f"rec_del_spec_{idx}"):
                     special_cols.pop(idx)
                     st.session_state["rec_special_cols"] = special_cols
@@ -479,16 +531,17 @@ def run_reconciler():
         st.caption(f"Mode : **{mode_lbl}** · {casse_lbl}")
 
         try:
-            # ── Apply exclusion filters ───────────
-            mask_keep = pd.Series([True] * len(df_a), index=df_a.index)
+            # ── Apply exclusion filters on file B ─
+            mask_keep_b = pd.Series([True] * len(df_b), index=df_b.index)
             for excl in exclusions:
                 col_e = excl.get("col")
                 vals_e = excl.get("values", [])
-                if col_e and vals_e:
-                    mask_keep &= ~df_a[col_e].astype(str).isin(vals_e)
+                if col_e and col_e in df_b.columns and vals_e:
+                    mask_keep_b &= ~df_b[col_e].astype(str).isin(vals_e)
 
-            excluded_count = int((~mask_keep).sum())
-            df_a_filtered = df_a[mask_keep].copy().reset_index(drop=True)
+            excluded_count = int((~mask_keep_b).sum())
+            df_b = df_b[mask_keep_b].copy().reset_index(drop=True)
+            df_a_filtered = df_a.copy().reset_index(drop=True)
 
             # ── Build base result from A ──────────
             cols_a = [c for c in output_cols_a if c in df_a_filtered.columns]
@@ -503,10 +556,11 @@ def run_reconciler():
                 if stype == "condition":
                     continue  # computed later
                 col_name = spec["name"]
+                df_b_spec = _apply_col_filters(df_b, spec.get("col_filters", []))
                 values = []
                 for _, row_a in df_a_filtered.iterrows():
                     val_a = str(row_a[key_a])
-                    matched = find_matching_rows(df_b, key_b, val_a, match_mode, case_sensitive)
+                    matched = find_matching_rows(df_b_spec, key_b, val_a, match_mode, case_sensitive)
                     if stype == "concat":
                         v = build_concat_value(matched, spec.get("cols", []),
                                                spec.get("col_sep", " | "),
@@ -542,7 +596,7 @@ def run_reconciler():
 
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Lignes fichier de base", len(df_a))
-            m2.metric("Exclusions appliquées", excluded_count)
+            m2.metric(f"Lignes exclues de {name_b}", excluded_count)
             m3.metric("Lignes traitées", len(df_a_filtered))
             m4.metric("Avec correspondance", matched_count)
 
@@ -572,8 +626,8 @@ def run_reconciler():
                         df_result[no_match_mask].to_excel(
                             writer, index=False, sheet_name="Sans correspondance")
                     if excluded_count > 0:
-                        df_a[~mask_keep].to_excel(
-                            writer, index=False, sheet_name="Exclusions")
+                        st.session_state["rec_df_b"][~mask_keep_b].to_excel(
+                            writer, index=False, sheet_name="Exclusions B")
                 st.download_button("⬇️ Télécharger (.xlsx)", buf.getvalue(),
                                    "reconciliation_result.xlsx",
                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
