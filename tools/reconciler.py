@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import io
+import json
+
 
 # ─────────────────────────────────────────────
 #  Helpers
@@ -54,56 +56,103 @@ def build_concat_value(matched_rows, cols, col_sep, row_sep):
     return row_sep.join(parts)
 
 
+def sum_matched_col(matched_rows, col):
+    try:
+        vals = pd.to_numeric(matched_rows[col], errors="coerce").dropna()
+        return float(vals.sum()) if len(vals) > 0 else None
+    except Exception:
+        return None
+
+
 def _apply_col_filters(df_b, col_filters):
-    """Apply per-column exclusion filters on df_b, return filtered copy."""
     df = df_b.copy()
     for f in col_filters:
-        col_f = f.get("col")
-        vals_f = f.get("values", [])
+        col_f, vals_f = f.get("col"), f.get("values", [])
         if col_f and col_f in df.columns and vals_f:
             df = df[~df[col_f].astype(str).isin(vals_f)]
     return df
-
-
-def build_sum_value(matched_rows, col):
-    try:
-        vals = pd.to_numeric(matched_rows[col], errors="coerce").dropna()
-        return vals.sum() if len(vals) > 0 else ""
-    except Exception:
-        return ""
 
 
 def evaluate_condition(row, rules, else_output):
     for rule in rules:
         left_val = str(row.get(rule.get("left", ""), ""))
         right_val = (str(row.get(rule.get("right", ""), ""))
-                     if rule.get("right_type") == "col"
-                     else rule.get("right", ""))
+                     if rule.get("right_type") == "col" else rule.get("right", ""))
         op = rule.get("op", "=")
         try:
-            if op == "=":
-                cond = left_val == right_val
-            elif op == "≠":
-                cond = left_val != right_val
-            elif op == "contient":
-                cond = right_val.lower() in left_val.lower()
-            elif op == "ne contient pas":
-                cond = right_val.lower() not in left_val.lower()
-            elif op == ">":
-                cond = float(left_val) > float(right_val)
-            elif op == "<":
-                cond = float(left_val) < float(right_val)
-            elif op == ">=":
-                cond = float(left_val) >= float(right_val)
-            elif op == "<=":
-                cond = float(left_val) <= float(right_val)
-            else:
-                cond = False
+            if op == "=":        cond = left_val == right_val
+            elif op == "≠":      cond = left_val != right_val
+            elif op == "contient":      cond = right_val.lower() in left_val.lower()
+            elif op == "ne contient pas": cond = right_val.lower() not in left_val.lower()
+            elif op == ">":      cond = float(left_val) > float(right_val)
+            elif op == "<":      cond = float(left_val) < float(right_val)
+            elif op == ">=":     cond = float(left_val) >= float(right_val)
+            elif op == "<=":     cond = float(left_val) <= float(right_val)
+            else: cond = False
         except Exception:
             cond = False
         if cond:
             return rule.get("output", "")
     return else_output
+
+
+def evaluate_formula(row, terms, df_b, key_b, key_a_val, match_mode, case_sensitive):
+    """Evaluate a Calcul formula for a single row. Returns numeric result or ''."""
+    result = None
+    for i, term in enumerate(terms):
+        src = term.get("source", "val")
+        op = term.get("op", "+")
+
+        if src == "col_result":
+            raw = row.get(term.get("col", ""), None)
+            try:
+                val = float(raw) if raw not in (None, "", "nan", "None") else None
+            except (ValueError, TypeError):
+                val = None
+        elif src == "sum_matched":
+            col_b = term.get("col", "")
+            val_a_key = str(row.get(key_a_val, ""))
+            df_b_f = _apply_col_filters(df_b, term.get("col_filters", []))
+            matched = find_matching_rows(df_b_f, key_b, val_a_key, match_mode, case_sensitive)
+            val = sum_matched_col(matched, col_b)
+        else:  # val
+            try:
+                val = float(term.get("val", 0))
+            except (ValueError, TypeError):
+                val = None
+
+        if val is None:
+            continue
+
+        if result is None or i == 0:
+            result = val
+        else:
+            try:
+                if op == "+": result += val
+                elif op == "-": result -= val
+                elif op == "*": result *= val
+                elif op == "/": result = result / val if val != 0 else None
+            except Exception:
+                result = None
+    return result if result is not None else ""
+
+
+# ── Config save/load ─────────────────────────
+CONFIG_KEYS = [
+    "rec_key_a_val", "rec_key_b_val", "rec_match_mode", "rec_case_sensitive",
+    "rec_output_cols_a", "rec_special_cols", "rec_exclusions",
+]
+
+def export_config():
+    cfg = {k.replace("rec_", ""): st.session_state.get(k) for k in CONFIG_KEYS}
+    return json.dumps(cfg, ensure_ascii=False, indent=2)
+
+
+def import_config(cfg: dict):
+    for k in CONFIG_KEYS:
+        short = k.replace("rec_", "")
+        if short in cfg:
+            st.session_state[k] = cfg[short]
 
 
 # ─────────────────────────────────────────────
@@ -156,6 +205,26 @@ def run_reconciler():
                     st.caption(f"{len(df_b)} lignes · {len(df_b.columns)} colonnes")
                     with st.expander("Aperçu"):
                         st.dataframe(df_b.head(5), use_container_width=True)
+
+                # ── Charger une configuration ─────
+                st.markdown("---")
+                with st.expander("📂 Charger une configuration sauvegardée", expanded=False):
+                    st.caption("Importez un fichier .json généré par HeroTool pour restaurer tous vos paramètres et passer directement au résultat.")
+                    cfg_file = st.file_uploader("Configuration (.json)", type=["json"],
+                                                key="rec_cfg_upload",
+                                                label_visibility="collapsed")
+                    if cfg_file:
+                        try:
+                            cfg = json.load(cfg_file)
+                            if st.button("✅ Appliquer cette configuration", type="primary"):
+                                import_config(cfg)
+                                if "rec_exclusions" not in st.session_state:
+                                    st.session_state["rec_exclusions"] = []
+                                st.session_state["rec_step"] = 4
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"Impossible de lire la configuration : {e}")
+
                 st.markdown("")
                 if st.button("Suivant →", type="primary"):
                     st.session_state["rec_step"] = 2
@@ -168,7 +237,6 @@ def run_reconciler():
         df_a = st.session_state["rec_df_a"]
         df_b = st.session_state["rec_df_b"]
         name_a, name_b = st.session_state["rec_name_a"], st.session_state["rec_name_b"]
-
         st.markdown("### 🔑 Étape 2 — Clé & mode de rapprochement")
 
         ca, cb = st.columns(2)
@@ -180,29 +248,22 @@ def run_reconciler():
             st.markdown(f"**Colonne clé dans {name_b}**")
             key_b = st.selectbox("Clé B", list(df_b.columns), key="rec_key_b",
                                  label_visibility="collapsed")
-
         if key_a and key_b:
             ca2, cb2 = st.columns(2)
             with ca2:
-                st.caption("Exemples : " + ", ".join(
-                    df_a[key_a].dropna().astype(str).unique()[:6]))
+                st.caption("Exemples : " + ", ".join(df_a[key_a].dropna().astype(str).unique()[:6]))
             with cb2:
-                st.caption("Exemples : " + ", ".join(
-                    df_b[key_b].dropna().astype(str).unique()[:6]))
+                st.caption("Exemples : " + ", ".join(df_b[key_b].dropna().astype(str).unique()[:6]))
 
         st.markdown("---")
         st.markdown("**Mode de rapprochement**")
-
-        match_mode = st.radio(
-            "Mode", ["Match parfait", "Match normal (contient)"],
-            key="rec_match_mode_radio", horizontal=True, label_visibility="collapsed",
-            help="**Parfait** : valeur identique. **Normal** : le champ B contient la clé A.",
-        )
-        case_opt = st.radio(
-            "Casse",
-            ["Ignorer la casse  (Xavier = XAVIER)", "Respecter la casse  (Xavier ≠ XAVIER)"],
-            key="rec_case_radio", horizontal=True, label_visibility="collapsed",
-        )
+        match_mode = st.radio("Mode", ["Match parfait", "Match normal (contient)"],
+                              key="rec_match_mode_radio", horizontal=True,
+                              label_visibility="collapsed",
+                              help="**Parfait** : valeur identique. **Normal** : le champ B contient la clé A.")
+        case_opt = st.radio("Casse",
+                            ["Ignorer la casse  (Xavier = XAVIER)", "Respecter la casse  (Xavier ≠ XAVIER)"],
+                            key="rec_case_radio", horizontal=True, label_visibility="collapsed")
         case_sensitive = "Respecter" in case_opt
         mm = "parfait" if "parfait" in match_mode else "normal"
 
@@ -244,41 +305,33 @@ def run_reconciler():
 
         st.markdown("### 🗂️ Étape 3 — Configuration de la sortie")
 
-        # ── FILTRES D'EXCLUSION ───────────────
-        with st.expander("🚫 Filtres d'exclusion (optionnel)", expanded=False):
-            st.markdown(
-                f"Exclure des lignes du **{name_b}** avant le rapprochement. "
-                "Les lignes exclues du fichier B ne seront jamais matchées."
-            )
+        # ── FILTRES D'EXCLUSION (global) ─────
+        with st.expander("🚫 Filtres d'exclusion globaux sur " + name_b, expanded=False):
+            st.caption("Ces lignes de " + name_b + " sont exclues pour toutes les colonnes.")
             exclusions = st.session_state.get("rec_exclusions", [])
-
             for idx, excl in enumerate(exclusions):
-                c1, c2 = st.columns([2, 3])
-                with c1:
+                fc1, fc2 = st.columns([2, 3])
+                with fc1:
                     excl["col"] = st.selectbox(
-                        f"Colonne {idx+1}", list(df_b.columns),
+                        f"Colonne #{idx+1}", list(df_b.columns),
                         index=list(df_b.columns).index(excl["col"])
-                              if excl["col"] in df_b.columns else 0,
+                              if excl.get("col") in df_b.columns else 0,
                         key=f"rec_excl_col_{idx}",
                     )
-                with c2:
+                with fc2:
                     unique_vals = sorted(df_b[excl["col"]].dropna().astype(str).unique().tolist())
                     excl["values"] = st.multiselect(
-                        f"Valeurs à exclure",
-                        options=unique_vals,
+                        "Valeurs à exclure", options=unique_vals,
                         default=[v for v in excl.get("values", []) if v in unique_vals],
                         key=f"rec_excl_vals_{idx}",
                     )
-                if st.button("🗑️ Supprimer ce filtre", key=f"rec_del_excl_{idx}"):
+                if st.button("✕ Supprimer", key=f"rec_del_excl_{idx}"):
                     exclusions.pop(idx)
-                    st.session_state["rec_exclusions"] = exclusions
-                    st.rerun()
+                    st.session_state["rec_exclusions"] = exclusions; st.rerun()
                 st.markdown("---")
-
-            if st.button("➕ Ajouter un filtre d'exclusion"):
+            if st.button("➕ Ajouter un filtre global"):
                 exclusions.append({"col": list(df_b.columns)[0], "values": []})
-                st.session_state["rec_exclusions"] = exclusions
-                st.rerun()
+                st.session_state["rec_exclusions"] = exclusions; st.rerun()
             st.session_state["rec_exclusions"] = exclusions
 
         st.markdown("---")
@@ -296,209 +349,219 @@ def run_reconciler():
 
         # ── COLONNES SPÉCIALES ────────────────
         st.markdown(f"#### 🔧 Colonnes spéciales depuis **{name_b}**")
-        st.markdown(
-            "Trois types disponibles : **Concaténation**, **Somme**, **Condition**."
-        )
 
         special_cols = st.session_state.get("rec_special_cols", [])
 
-        # Names of already-defined special cols + selected A cols (for condition references)
-        available_ref_cols = list(selected_a) + [s["name"] for s in special_cols]
-
         for idx, spec in enumerate(special_cols):
             stype = spec.get("type", "concat")
-            type_icon = {"concat": "🔗", "sum": "➕", "condition": "🔀"}.get(stype, "🔧")
-            with st.expander(f"{type_icon} **{spec['name']}** ({stype})", expanded=True):
+            icon = {"concat": "🔗", "calcul": "🧮", "condition": "🔀"}.get(stype, "🔧")
+            with st.expander(f"{icon} **{spec['name']}** — {stype}", expanded=True):
 
                 spec["name"] = st.text_input(
-                    "Nom de la colonne", value=spec["name"], key=f"rec_spec_name_{idx}"
-                )
+                    "Nom", value=spec["name"], key=f"rec_spec_name_{idx}")
 
-                # ── CONCAT ──
+                # ── CONCAT ───────────────────
                 if stype == "concat":
                     spec["cols"] = st.multiselect(
-                        "Colonnes à concaténer (par ligne matchée)", list(df_b.columns),
+                        "Colonnes à concaténer", list(df_b.columns),
                         default=[c for c in spec.get("cols", []) if c in df_b.columns],
                         key=f"rec_spec_cols_{idx}",
                     )
-                    c1, c2 = st.columns(2)
-                    with c1:
+                    cc1, cc2 = st.columns(2)
+                    with cc1:
                         spec["col_sep"] = st.text_input(
                             "Séparateur entre colonnes", value=spec.get("col_sep", " | "),
-                            key=f"rec_spec_colsep_{idx}",
-                        )
-                    with c2:
+                            key=f"rec_spec_colsep_{idx}")
+                    with cc2:
                         spec["row_sep"] = st.text_input(
                             "Séparateur entre lignes matchées", value=spec.get("row_sep", " // "),
-                            key=f"rec_spec_rowsep_{idx}",
-                        )
+                            key=f"rec_spec_rowsep_{idx}")
 
-                # ── SUM ──
-                elif stype == "sum":
-                    num_cols = list(df_b.columns)
-                    spec["sum_col"] = st.selectbox(
-                        "Colonne numérique à sommer", num_cols,
-                        index=num_cols.index(spec["sum_col"])
-                              if spec.get("sum_col") in num_cols else 0,
-                        key=f"rec_spec_sumcol_{idx}",
-                    )
+                # ── CALCUL ───────────────────
+                elif stype == "calcul":
+                    ref_cols = list(selected_a) + [special_cols[j]["name"] for j in range(idx)]
+                    terms = spec.get("terms", [])
+                    st.markdown("**Termes du calcul** (évalués de gauche à droite)")
+                    st.caption("Sources : *Col résultat* = colonne déjà calculée (fichier A ou col spéciale précédente) · *Somme matchée* = somme des lignes correspondantes dans " + name_b + " · *Valeur fixe* = nombre")
 
-                # ── CONDITION ──
+                    for ti, term in enumerate(terms):
+                        tc = st.columns([1, 2, 3, 1])
+                        with tc[0]:
+                            if ti == 0:
+                                st.markdown("<div style='padding-top:8px;text-align:center;color:#9ca3af'>départ</div>", unsafe_allow_html=True)
+                            else:
+                                term["op"] = st.selectbox(
+                                    "Op", ["+", "-", "*", "/"],
+                                    index=["+", "-", "*", "/"].index(term.get("op", "+")),
+                                    key=f"rec_term_op_{idx}_{ti}",
+                                    label_visibility="collapsed",
+                                )
+                        with tc[1]:
+                            src_opts = ["col résultat", "somme matchée", "valeur fixe"]
+                            src_map = {"col_result": "col résultat",
+                                       "sum_matched": "somme matchée", "val": "valeur fixe"}
+                            src_rev = {v: k for k, v in src_map.items()}
+                            current_src = src_map.get(term.get("source", "val"), "valeur fixe")
+                            chosen_src = st.selectbox(
+                                "Source", src_opts,
+                                index=src_opts.index(current_src),
+                                key=f"rec_term_src_{idx}_{ti}",
+                                label_visibility="collapsed",
+                            )
+                            term["source"] = src_rev[chosen_src]
+                        with tc[2]:
+                            if term["source"] == "col_result":
+                                opts = ref_cols if ref_cols else ["(aucune)"]
+                                term["col"] = st.selectbox(
+                                    "Col", opts,
+                                    index=opts.index(term["col"]) if term.get("col") in opts else 0,
+                                    key=f"rec_term_col_{idx}_{ti}",
+                                    label_visibility="collapsed",
+                                )
+                            elif term["source"] == "sum_matched":
+                                b_cols = list(df_b.columns)
+                                term["col"] = st.selectbox(
+                                    "Col B", b_cols,
+                                    index=b_cols.index(term["col"]) if term.get("col") in b_cols else 0,
+                                    key=f"rec_term_col_{idx}_{ti}",
+                                    label_visibility="collapsed",
+                                )
+                            else:
+                                term["val"] = st.text_input(
+                                    "Valeur", value=str(term.get("val", "0")),
+                                    key=f"rec_term_val_{idx}_{ti}",
+                                    label_visibility="collapsed",
+                                )
+                        with tc[3]:
+                            if st.button("✕", key=f"rec_del_term_{idx}_{ti}"):
+                                terms.pop(ti)
+                                spec["terms"] = terms
+                                st.session_state["rec_special_cols"] = special_cols; st.rerun()
+
+                    spec["terms"] = terms
+                    if st.button("➕ Ajouter un terme", key=f"rec_add_term_{idx}"):
+                        terms.append({"op": "+", "source": "val", "val": "0", "col": ""})
+                        spec["terms"] = terms
+                        st.session_state["rec_special_cols"] = special_cols; st.rerun()
+
+                # ── CONDITION ────────────────
                 elif stype == "condition":
-                    ref_cols_before = list(selected_a) + [
-                        special_cols[j]["name"] for j in range(idx)
-                    ]
-                    if not ref_cols_before:
-                        st.warning("Définissez d'abord des colonnes de référence (fichier A ou colonnes spéciales précédentes).")
+                    ref_cols = list(selected_a) + [special_cols[j]["name"] for j in range(idx)]
+                    if not ref_cols:
+                        st.warning("Définissez d'abord des colonnes de référence.")
                     else:
-                        st.markdown("**Règles (évaluées dans l'ordre — première qui matche)**")
+                        st.markdown("**Règles IF/ELIF/ELSE** (première qui matche)")
                         rules = spec.get("rules", [])
-
                         for ri, rule in enumerate(rules):
                             rc1, rc2, rc3, rc4, rc5 = st.columns([2, 1, 1, 2, 2])
                             with rc1:
                                 rule["left"] = st.selectbox(
-                                    "Colonne gauche", ref_cols_before,
-                                    index=ref_cols_before.index(rule["left"])
-                                          if rule.get("left") in ref_cols_before else 0,
-                                    key=f"rec_rule_left_{idx}_{ri}",
-                                    label_visibility="collapsed",
-                                )
+                                    "G", ref_cols,
+                                    index=ref_cols.index(rule["left"]) if rule.get("left") in ref_cols else 0,
+                                    key=f"rec_rule_left_{idx}_{ri}", label_visibility="collapsed")
                             with rc2:
+                                ops = ["=", "≠", "contient", "ne contient pas", ">", "<", ">=", "<="]
                                 rule["op"] = st.selectbox(
-                                    "Op", ["=", "≠", "contient", "ne contient pas", ">", "<", ">=", "<="],
-                                    index=["=", "≠", "contient", "ne contient pas", ">", "<", ">=", "<="]
-                                          .index(rule.get("op", "=")),
-                                    key=f"rec_rule_op_{idx}_{ri}",
-                                    label_visibility="collapsed",
-                                )
+                                    "Op", ops, index=ops.index(rule.get("op", "=")),
+                                    key=f"rec_rule_op_{idx}_{ri}", label_visibility="collapsed")
                             with rc3:
                                 rule["right_type"] = st.selectbox(
-                                    "Type droite", ["valeur", "col"],
+                                    "T", ["valeur", "col"],
                                     index=0 if rule.get("right_type", "valeur") == "valeur" else 1,
-                                    key=f"rec_rule_rtype_{idx}_{ri}",
-                                    label_visibility="collapsed",
-                                )
+                                    key=f"rec_rule_rtype_{idx}_{ri}", label_visibility="collapsed")
                             with rc4:
                                 if rule["right_type"] == "col":
                                     rule["right"] = st.selectbox(
-                                        "Col droite", ref_cols_before,
-                                        index=ref_cols_before.index(rule["right"])
-                                              if rule.get("right") in ref_cols_before else 0,
-                                        key=f"rec_rule_right_{idx}_{ri}",
-                                        label_visibility="collapsed",
-                                    )
+                                        "D", ref_cols,
+                                        index=ref_cols.index(rule["right"]) if rule.get("right") in ref_cols else 0,
+                                        key=f"rec_rule_right_{idx}_{ri}", label_visibility="collapsed")
                                 else:
                                     rule["right"] = st.text_input(
-                                        "Valeur", value=rule.get("right", ""),
-                                        key=f"rec_rule_right_{idx}_{ri}",
-                                        label_visibility="collapsed",
-                                        placeholder="valeur à comparer",
-                                    )
+                                        "Val", value=rule.get("right", ""),
+                                        key=f"rec_rule_right_{idx}_{ri}", label_visibility="collapsed",
+                                        placeholder="valeur")
                             with rc5:
                                 rule["output"] = st.text_input(
-                                    "→ Écrire", value=rule.get("output", ""),
-                                    key=f"rec_rule_out_{idx}_{ri}",
-                                    label_visibility="collapsed",
-                                    placeholder="texte si vrai",
-                                )
+                                    "→", value=rule.get("output", ""),
+                                    key=f"rec_rule_out_{idx}_{ri}", label_visibility="collapsed",
+                                    placeholder="écrire")
                             if st.button("✕", key=f"rec_del_rule_{idx}_{ri}"):
                                 rules.pop(ri)
                                 spec["rules"] = rules
-                                st.session_state["rec_special_cols"] = special_cols
-                                st.rerun()
-
+                                st.session_state["rec_special_cols"] = special_cols; st.rerun()
                         spec["rules"] = rules
-
                         if st.button("➕ Ajouter une règle", key=f"rec_add_rule_{idx}"):
-                            rules.append({"left": ref_cols_before[0], "op": "=",
+                            rules.append({"left": ref_cols[0], "op": "=",
                                           "right_type": "valeur", "right": "", "output": ""})
                             spec["rules"] = rules
-                            st.session_state["rec_special_cols"] = special_cols
-                            st.rerun()
-
+                            st.session_state["rec_special_cols"] = special_cols; st.rerun()
                         spec["else_output"] = st.text_input(
-                            "Sinon (ELSE) → écrire",
-                            value=spec.get("else_output", ""),
-                            key=f"rec_spec_else_{idx}",
-                        )
+                            "ELSE → écrire", value=spec.get("else_output", ""),
+                            key=f"rec_spec_else_{idx}")
 
-                # ── FILTRES D'EXCLUSION PAR COLONNE ──
+                # ── FILTRES PAR COLONNE ───────
                 st.markdown("---")
-                st.markdown(f"**🚫 Filtres d'exclusion sur {name_b}** *(pour cette colonne uniquement)*")
-                col_filters = spec.get("col_filters", [])
-
-                for fi, cf in enumerate(col_filters):
-                    fc1, fc2 = st.columns([2, 3])
-                    with fc1:
-                        cf["col"] = st.selectbox(
-                            f"Colonne B #{fi+1}", list(df_b.columns),
-                            index=list(df_b.columns).index(cf["col"])
-                                  if cf.get("col") in df_b.columns else 0,
-                            key=f"rec_cf_col_{idx}_{fi}",
-                        )
-                    with fc2:
-                        unique_vals = sorted(df_b[cf["col"]].dropna().astype(str).unique().tolist())
-                        cf["values"] = st.multiselect(
-                            "Valeurs à exclure",
-                            options=unique_vals,
-                            default=[v for v in cf.get("values", []) if v in unique_vals],
-                            key=f"rec_cf_vals_{idx}_{fi}",
-                        )
-                    if st.button("✕ Supprimer filtre", key=f"rec_del_cf_{idx}_{fi}"):
-                        col_filters.pop(fi)
+                with st.expander(f"🚫 Filtres sur {name_b} *(cette colonne uniquement)*", expanded=False):
+                    col_filters = spec.get("col_filters", [])
+                    for fi, cf in enumerate(col_filters):
+                        fc1, fc2 = st.columns([2, 3])
+                        with fc1:
+                            cf["col"] = st.selectbox(
+                                f"Col #{fi+1}", list(df_b.columns),
+                                index=list(df_b.columns).index(cf["col"])
+                                      if cf.get("col") in df_b.columns else 0,
+                                key=f"rec_cf_col_{idx}_{fi}")
+                        with fc2:
+                            uv = sorted(df_b[cf["col"]].dropna().astype(str).unique().tolist())
+                            cf["values"] = st.multiselect(
+                                "Valeurs à exclure", options=uv,
+                                default=[v for v in cf.get("values", []) if v in uv],
+                                key=f"rec_cf_vals_{idx}_{fi}")
+                        if st.button("✕", key=f"rec_del_cf_{idx}_{fi}"):
+                            col_filters.pop(fi)
+                            spec["col_filters"] = col_filters
+                            st.session_state["rec_special_cols"] = special_cols; st.rerun()
+                    if st.button("➕ Ajouter un filtre", key=f"rec_add_cf_{idx}"):
+                        col_filters.append({"col": list(df_b.columns)[0], "values": []})
                         spec["col_filters"] = col_filters
-                        st.session_state["rec_special_cols"] = special_cols
-                        st.rerun()
-
-                if st.button("➕ Ajouter un filtre", key=f"rec_add_cf_{idx}"):
-                    col_filters.append({"col": list(df_b.columns)[0], "values": []})
+                        st.session_state["rec_special_cols"] = special_cols; st.rerun()
                     spec["col_filters"] = col_filters
-                    st.session_state["rec_special_cols"] = special_cols
-                    st.rerun()
-
-                spec["col_filters"] = col_filters
-
-                # ── Aperçu ──
-                st.markdown("")
-                if stype == "concat" and spec.get("cols") and len(df_a[key_a].dropna()) > 0:
-                    sv = str(df_a[key_a].dropna().iloc[0])
-                    df_b_prev = _apply_col_filters(df_b, col_filters)
-                    m = find_matching_rows(df_b_prev, key_b, sv, match_mode, case_sensitive)
-                    prev = build_concat_value(m, spec["cols"], spec["col_sep"], spec["row_sep"])
-                    st.caption(f"Aperçu pour \"{sv}\" → `{prev[:100]}{'...' if len(prev)>100 else ''}`")
-                elif stype == "sum" and spec.get("sum_col") and len(df_a[key_a].dropna()) > 0:
-                    sv = str(df_a[key_a].dropna().iloc[0])
-                    df_b_prev = _apply_col_filters(df_b, col_filters)
-                    m = find_matching_rows(df_b_prev, key_b, sv, match_mode, case_sensitive)
-                    total = build_sum_value(m, spec["sum_col"])
-                    st.caption(f"Aperçu pour \"{sv}\" → somme = `{total}`")
 
                 if st.button("🗑️ Supprimer cette colonne", key=f"rec_del_spec_{idx}"):
                     special_cols.pop(idx)
-                    st.session_state["rec_special_cols"] = special_cols
-                    st.rerun()
+                    st.session_state["rec_special_cols"] = special_cols; st.rerun()
 
-        # ── Add buttons ───────────────────────
+        # ── Boutons d'ajout ───────────────────
         st.markdown("")
         ca, cb, cc = st.columns(3)
         with ca:
             if st.button("➕ Concaténation"):
                 special_cols.append({"type": "concat", "name": f"Concat_{len(special_cols)+1}",
-                                     "cols": [], "col_sep": " | ", "row_sep": " // "})
+                                     "cols": [], "col_sep": " | ", "row_sep": " // ", "col_filters": []})
                 st.session_state["rec_special_cols"] = special_cols; st.rerun()
         with cb:
-            if st.button("➕ Somme"):
-                special_cols.append({"type": "sum", "name": f"Somme_{len(special_cols)+1}",
-                                     "sum_col": list(df_b.columns)[0] if df_b.columns.any() else ""})
+            if st.button("➕ Calcul"):
+                special_cols.append({"type": "calcul", "name": f"Calcul_{len(special_cols)+1}",
+                                     "terms": [], "col_filters": []})
                 st.session_state["rec_special_cols"] = special_cols; st.rerun()
         with cc:
             if st.button("➕ Condition"):
                 special_cols.append({"type": "condition", "name": f"Condition_{len(special_cols)+1}",
-                                     "rules": [], "else_output": ""})
+                                     "rules": [], "else_output": "", "col_filters": []})
                 st.session_state["rec_special_cols"] = special_cols; st.rerun()
 
         st.session_state["rec_special_cols"] = special_cols
+
+        # ── Sauvegarde config ─────────────────
+        st.markdown("---")
+        st.session_state["rec_output_cols_a"] = selected_a
+        cfg_json = export_config()
+        st.download_button(
+            "💾 Sauvegarder la configuration",
+            data=cfg_json,
+            file_name="herotool_config.json",
+            mime="application/json",
+        )
 
         st.markdown("")
         c1, c2 = st.columns([1, 5])
@@ -527,53 +590,55 @@ def run_reconciler():
 
         st.markdown("### ✅ Étape 4 — Résultat")
         mode_lbl = "Match parfait" if match_mode == "parfait" else "Match normal (contient)"
-        casse_lbl = "casse respectée" if case_sensitive else "casse ignorée"
-        st.caption(f"Mode : **{mode_lbl}** · {casse_lbl}")
+        st.caption(f"Mode : **{mode_lbl}** · {'casse respectée' if case_sensitive else 'casse ignorée'}")
 
         try:
-            # ── Apply exclusion filters on file B ─
+            # ── Filtres globaux sur B ─────────────
             mask_keep_b = pd.Series([True] * len(df_b), index=df_b.index)
             for excl in exclusions:
-                col_e = excl.get("col")
-                vals_e = excl.get("values", [])
+                col_e, vals_e = excl.get("col"), excl.get("values", [])
                 if col_e and col_e in df_b.columns and vals_e:
                     mask_keep_b &= ~df_b[col_e].astype(str).isin(vals_e)
-
             excluded_count = int((~mask_keep_b).sum())
             df_b = df_b[mask_keep_b].copy().reset_index(drop=True)
             df_a_filtered = df_a.copy().reset_index(drop=True)
 
-            # ── Build base result from A ──────────
+            # ── Colonnes A ───────────────────────
             cols_a = [c for c in output_cols_a if c in df_a_filtered.columns]
             if key_a not in cols_a:
                 cols_a = [key_a] + cols_a
             df_result = df_a_filtered[cols_a].copy()
 
-            # ── Compute concat / sum columns ──────
+            # ── Colonnes concat / calcul (non-condition) ─
             no_match_flags = []
             for spec in special_cols:
                 stype = spec.get("type", "concat")
                 if stype == "condition":
-                    continue  # computed later
+                    continue
                 col_name = spec["name"]
                 df_b_spec = _apply_col_filters(df_b, spec.get("col_filters", []))
                 values = []
-                for _, row_a in df_a_filtered.iterrows():
-                    val_a = str(row_a[key_a])
-                    matched = find_matching_rows(df_b_spec, key_b, val_a, match_mode, case_sensitive)
+                for row_idx, (_, row_a) in enumerate(df_a_filtered.iterrows()):
+                    val_a_key = str(row_a[key_a])
+                    matched = find_matching_rows(df_b_spec, key_b, val_a_key, match_mode, case_sensitive)
                     if stype == "concat":
                         v = build_concat_value(matched, spec.get("cols", []),
                                                spec.get("col_sep", " | "),
                                                spec.get("row_sep", " // "))
-                    elif stype == "sum":
-                        v = build_sum_value(matched, spec.get("sum_col", ""))
+                    elif stype == "calcul":
+                        partial_row = df_result.iloc[row_idx].to_dict() if row_idx < len(df_result) else {}
+                        v = evaluate_formula(
+                            partial_row, spec.get("terms", []),
+                            df_b_spec, key_b, key_a,
+                            match_mode, case_sensitive,
+                        )
                     else:
                         v = ""
                     values.append(v)
                 df_result[col_name] = values
                 no_match_flags.append(col_name)
 
-            # ── Compute condition columns ─────────
+            # ── Condition columns ─────────────────
             for spec in special_cols:
                 if spec.get("type") != "condition":
                     continue
@@ -587,21 +652,19 @@ def run_reconciler():
             # ── Stats ─────────────────────────────
             if no_match_flags:
                 no_match_mask = df_result[no_match_flags].apply(
-                    lambda col: col.astype(str).isin(["", "nan", "0", "0.0"]),
+                    lambda col: col.astype(str).isin(["", "nan", "None"]),
                 ).all(axis=1)
             else:
                 no_match_mask = pd.Series([False] * len(df_result))
 
-            matched_count = int((~no_match_mask).sum())
-
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Lignes fichier de base", len(df_a))
-            m2.metric(f"Lignes exclues de {name_b}", excluded_count)
+            m2.metric(f"Exclusions dans {name_b}", excluded_count)
             m3.metric("Lignes traitées", len(df_a_filtered))
-            m4.metric("Avec correspondance", matched_count)
+            m4.metric("Avec correspondance", int((~no_match_mask).sum()))
 
             if no_match_mask.any():
-                st.caption(f"🟡 {int(no_match_mask.sum())} ligne(s) sans correspondance (surlignées)")
+                st.caption(f"🟡 {int(no_match_mask.sum())} ligne(s) sans correspondance")
 
             st.markdown("---")
 
@@ -610,35 +673,34 @@ def run_reconciler():
                     return ["background-color:#fef3c7;color:#92400e"] * len(row)
                 return [""] * len(row)
 
-            st.dataframe(
-                df_result.style.apply(highlight_row, axis=1),
-                use_container_width=True, height=450,
-            )
+            st.dataframe(df_result.style.apply(highlight_row, axis=1),
+                         use_container_width=True, height=450)
 
-            # ── Download ──────────────────────────
+            # ── Téléchargement ────────────────────
             st.markdown("---")
-            c1, c2 = st.columns(2)
-            with c1:
+            dc1, dc2, dc3 = st.columns(3)
+            with dc1:
                 buf = io.BytesIO()
                 with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
                     df_result.to_excel(writer, index=False, sheet_name="Résultat")
                     if no_match_mask.any():
-                        df_result[no_match_mask].to_excel(
-                            writer, index=False, sheet_name="Sans correspondance")
+                        df_result[no_match_mask].to_excel(writer, index=False, sheet_name="Sans correspondance")
                     if excluded_count > 0:
-                        st.session_state["rec_df_b"][~mask_keep_b].to_excel(
-                            writer, index=False, sheet_name="Exclusions B")
+                        st.session_state["rec_df_b"][~mask_keep_b].to_excel(writer, index=False, sheet_name="Exclusions B")
                 st.download_button("⬇️ Télécharger (.xlsx)", buf.getvalue(),
                                    "reconciliation_result.xlsx",
                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                    type="primary")
-            with c2:
+            with dc2:
                 st.download_button("⬇️ Télécharger (.csv)",
                                    df_result.to_csv(index=False).encode("utf-8-sig"),
                                    "reconciliation_result.csv", "text/csv")
+            with dc3:
+                st.download_button("💾 Sauvegarder la configuration",
+                                   export_config(), "herotool_config.json", "application/json")
 
         except Exception as e:
-            st.error(f"Erreur lors du rapprochement : {e}")
+            st.error(f"Erreur : {e}")
             import traceback
             st.code(traceback.format_exc())
 
