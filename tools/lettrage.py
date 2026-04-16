@@ -374,40 +374,108 @@ def run_lettrage():
 
         st.markdown("### ⚙️ Étape 3 — Options de lettrage")
 
-        c1, c2 = st.columns(2)
-        with c1:
-            col_name = st.text_input("Nom de la colonne de lettrage",
-                                     value=st.session_state.get("let_col_name", "Lettrage"),
-                                     key="let_col_name_w")
-            fmt = st.radio("Format des codes",
-                           ["alphabétique (A, B, AA, AB...)", "numérique (0001, 0002...)"],
-                           key="let_fmt_w")
-            prefix = st.text_input("Préfixe (optionnel)", value=st.session_state.get("let_prefix", ""),
-                                   key="let_prefix_w", placeholder="ex : LT-, 2024-")
-        with c2:
-            one_to_one = st.checkbox(
-                "Mode 1-à-1 (chaque ligne B ne peut être lettrée qu'une seule fois)",
-                value=st.session_state.get("let_one_to_one", True),
-                key="let_one_to_one_w",
-                help="Si décoché, une même ligne B peut être associée à plusieurs lignes A (1-à-plusieurs)."
-            )
-            unmatched_marker = st.text_input(
-                "Marqueur pour les non-lettrés (laisser vide = cellule vide)",
-                value=st.session_state.get("let_unmatched", ""),
-                key="let_unmatched_w",
-                placeholder="ex : NL, ?, —"
-            )
-            st.markdown("**Colonnes à inclure dans la sortie**")
-            cols_a_out = st.multiselect(f"Colonnes de {name_a}", list(df_a.columns),
-                                        default=list(df_a.columns), key="let_cols_a_out_w")
-            cols_b_out = st.multiselect(f"Colonnes de {name_b}", list(df_b.columns),
-                                        default=list(df_b.columns), key="let_cols_b_out_w")
+        # ── SECTION 1 : Colonne de lettrage ───
+        with st.expander("🏷️ Colonne de lettrage", expanded=True):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                col_name = st.text_input(
+                    "Nom de la colonne",
+                    value=st.session_state.get("let_col_name", "Lettrage"),
+                    key="let_col_name_w",
+                    help="Ce nom sera ajouté comme nouvelle colonne dans les deux sources.")
+            with c2:
+                fmt_opts = ["Alphabétique — A, B, C, ..., Z, AA, AB...", "Numérique — 0001, 0002, 0003..."]
+                fmt_saved = st.session_state.get("let_fmt", "alphabétique")
+                fmt_default = 1 if fmt_saved == "numérique" else 0
+                fmt = st.selectbox("Format des codes", fmt_opts, index=fmt_default, key="let_fmt_w")
+            with c3:
+                prefix = st.text_input(
+                    "Préfixe (optionnel)",
+                    value=st.session_state.get("let_prefix", ""),
+                    key="let_prefix_w",
+                    placeholder="ex : LT-, 2024-, REF-",
+                    help="Ajouté devant chaque code. Exemple : préfixe 'LT-' → LT-A, LT-B, LT-0001...")
+
+            fmt_clean = "numérique" if "Numérique" in fmt else "alphabétique"
+            preview_labels = [generate_label(i, fmt_clean, prefix) for i in range(5)]
+            st.caption(f"Aperçu des codes générés : **{' · '.join(preview_labels)} · ...**")
+
+        st.markdown("")
+
+        # ── SECTION 2 : Mode de correspondance ─
+        with st.expander("🔄 Mode de correspondance entre A et B", expanded=True):
+            mode_opts = [
+                "1-à-plusieurs  —  une ligne B peut être lettrée par plusieurs lignes A",
+                "1-à-1  —  une ligne B ne peut être lettrée qu'une seule fois (par la première ligne A qui la matche)",
+            ]
+            saved_oto = st.session_state.get("let_one_to_one", True)
+            mode_default = 1 if saved_oto else 0
+            mode_choice = st.selectbox("Mode", mode_opts, index=mode_default, key="let_mode_w",
+                                       label_visibility="collapsed")
+            one_to_one = "1-à-1" in mode_choice
+
+            if one_to_one:
+                st.info("Mode 1-à-1 : pour chaque ligne de A (dans l'ordre), on cherche des lignes de B disponibles. "
+                        "Une fois qu'une ligne B est lettrée, elle est réservée et ne peut plus être prise par une autre ligne A.")
+            else:
+                st.info("Mode 1-à-plusieurs : une même ligne de B peut recevoir plusieurs lettres différentes "
+                        "si elle correspond à plusieurs lignes de A. Utile quand une écriture B fait référence à plusieurs A.")
+
+        st.markdown("")
+
+        # ── SECTION 3 : Lignes sans correspondance ─
+        with st.expander("❓ Lignes sans correspondance", expanded=True):
+            preset_opts = ["(vide — cellule vide)", "NL", "—", "?", "Non lettré", "Personnalisé..."]
+            saved_marker = st.session_state.get("let_unmatched", "")
+            if saved_marker in ["NL", "—", "?", "Non lettré"]:
+                preset_default = preset_opts.index(saved_marker)
+            elif saved_marker == "":
+                preset_default = 0
+            else:
+                preset_default = preset_opts.index("Personnalisé...")
+
+            c1, c2 = st.columns(2)
+            with c1:
+                marker_choice = st.selectbox(
+                    "Marqueur pour les lignes non lettrées", preset_opts,
+                    index=preset_default, key="let_marker_preset_w",
+                    help="Valeur affichée dans la colonne de lettrage pour les lignes sans correspondance.")
+            with c2:
+                if marker_choice == "Personnalisé...":
+                    unmatched_marker = st.text_input(
+                        "Valeur personnalisée", value=saved_marker if preset_default == len(preset_opts)-1 else "",
+                        key="let_unmatched_w", placeholder="ex : HORS SCOPE, NA, ...")
+                elif marker_choice == "(vide — cellule vide)":
+                    unmatched_marker = ""
+                    st.caption("Les lignes non lettrées auront une cellule vide.")
+                else:
+                    unmatched_marker = marker_choice
+                    st.caption(f'Les lignes non lettrées afficheront : **"{unmatched_marker}"**')
+
+        st.markdown("")
+
+        # ── SECTION 4 : Colonnes de sortie ────
+        with st.expander("📋 Colonnes à inclure dans la sortie", expanded=False):
+            st.caption("Choisissez quelles colonnes de chaque source apparaissent dans le résultat.")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(f"**{name_a}**")
+                cols_a_out = st.multiselect(
+                    f"Colonnes A", list(df_a.columns),
+                    default=st.session_state.get("let_cols_a_out", list(df_a.columns)),
+                    key="let_cols_a_out_w", label_visibility="collapsed")
+            with c2:
+                st.markdown(f"**{name_b}**")
+                cols_b_out = st.multiselect(
+                    f"Colonnes B", list(df_b.columns),
+                    default=st.session_state.get("let_cols_b_out", list(df_b.columns)),
+                    key="let_cols_b_out_w", label_visibility="collapsed")
 
         # ── Sauvegarde config ─────────────────
         st.markdown("---")
         if st.session_state.get("let_criteria"):
             st.session_state["let_col_name"] = col_name
-            st.session_state["let_fmt"] = "numérique" if "numérique" in fmt else "alphabétique"
+            st.session_state["let_fmt"] = fmt_clean
             st.session_state["let_prefix"] = prefix
             st.session_state["let_one_to_one"] = one_to_one
             st.session_state["let_unmatched"] = unmatched_marker
@@ -424,7 +492,7 @@ def run_lettrage():
         with c2:
             if st.button("Lettrer →", type="primary"):
                 st.session_state["let_col_name"] = col_name
-                st.session_state["let_fmt"] = "numérique" if "numérique" in fmt else "alphabétique"
+                st.session_state["let_fmt"] = fmt_clean
                 st.session_state["let_prefix"] = prefix
                 st.session_state["let_one_to_one"] = one_to_one
                 st.session_state["let_unmatched"] = unmatched_marker
