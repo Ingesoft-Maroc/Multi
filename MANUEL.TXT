@@ -1,1 +1,232 @@
+══════════════════════════════════════════════════════════════════
+                    MANUEL D'UTILISATION — HeroTool
+══════════════════════════════════════════════════════════════════
 
+HeroTool est une boîte à outils pour les tâches répétitives sur
+fichiers Excel. Il contient actuellement deux outils principaux :
+le Réconciliateur et le Lettrage.
+
+──────────────────────────────────────────────────────────────────
+1. RÉCONCILIATEUR
+──────────────────────────────────────────────────────────────────
+
+OBJECTIF
+--------
+Rapprocher deux sources de données Excel en identifiant les
+correspondances entre elles, et générer un rapport de sortie
+configurable avec des colonnes calculées, des conditions et des
+filtres.
+
+ÉTAPE 1 — IMPORT
+----------------
+Deux modes d'import disponibles :
+
+  a) Deux fichiers Excel séparés
+     - Uploadez le fichier de base (référence) et le fichier
+       à rapprocher séparément.
+
+  b) Un fichier Excel multi-feuilles
+     - Uploadez un seul fichier contenant plusieurs feuilles.
+     - Sélectionnez quelle feuille est la base et quelle feuille
+       est à rapprocher.
+
+Après l'upload, vous pouvez charger une configuration sauvegardée
+(.json) pour restaurer tous vos paramètres et passer directement
+au résultat.
+
+ÉTAPE 2 — CLÉ & MODE
+---------------------
+  - Colonne clé A : la colonne identifiant chaque ligne dans le
+    fichier de base (ex : numéro de pièce, référence...).
+  - Colonne clé B : la colonne correspondante dans le fichier
+    à rapprocher.
+
+  Modes de match :
+    - Match parfait : les valeurs doivent être identiques.
+    - Match normal (contient) : la valeur du fichier B doit
+      contenir la valeur clé du fichier A.
+      Exemple : clé A = "Xavier" matche "M. Xavier Dupont".
+
+  Option casse :
+    - Ignorer la casse : "xavier" = "XAVIER"
+    - Respecter la casse : "xavier" ≠ "XAVIER"
+
+  Un aperçu en temps réel montre combien de lignes sont trouvées
+  pour le premier exemple de clé.
+
+ÉTAPE 3 — COLONNES DE SORTIE
+-----------------------------
+
+  FILTRES D'EXCLUSION GLOBAUX
+  Excluez des lignes du fichier B avant tout rapprochement.
+  - Choisissez une colonne du fichier B.
+  - Sélectionnez les valeurs à exclure parmi les valeurs uniques.
+  - Les lignes exclues n'apparaissent dans aucun calcul.
+  - Vous pouvez ajouter plusieurs filtres (logique ET).
+
+  COLONNES DU FICHIER A
+  Choisissez quelles colonnes du fichier de base apparaissent
+  dans le résultat final.
+
+  COLONNES SPÉCIALES (depuis le fichier B)
+  Trois types disponibles :
+
+  [🔗 Concaténation]
+    - Sélectionnez les colonnes du fichier B à assembler.
+    - Séparateur entre colonnes : ce qui sépare les valeurs
+      d'une même ligne (ex : " | ").
+    - Séparateur entre lignes : ce qui sépare plusieurs lignes
+      matchées (ex : " // ").
+    - Exemple : si 3 lignes correspondent, leurs valeurs sont
+      concaténées en une seule cellule.
+
+  [🧮 Calcul]
+    - Construisez une formule terme par terme.
+    - Trois types de termes :
+        • Col résultat : une colonne du fichier A ou une colonne
+          spéciale déjà calculée.
+        • Somme matchée : somme des valeurs d'une colonne du
+          fichier B pour toutes les lignes correspondantes.
+        • Valeur fixe : un nombre littéral.
+    - Opérateurs disponibles : +, -, *, /
+    - Exemple : Somme matchée(Montant) / Col A(Budget) * 100
+      donne un taux de réalisation en %.
+
+  [🔀 Condition]
+    - Définissez des règles IF/ELIF/ELSE.
+    - Chaque règle : [colonne] [opérateur] [valeur ou colonne]
+      → [texte à écrire si vrai]
+    - Opérateurs : =, ≠, contient, ne contient pas, >, <, >=, <=
+    - La première règle vraie est appliquée.
+    - ELSE : valeur si aucune règle ne matche.
+    - Les colonnes disponibles incluent le fichier A et les
+      colonnes spéciales définies avant.
+
+  FILTRES PAR COLONNE
+  Chaque colonne spéciale peut avoir ses propres filtres
+  d'exclusion sur le fichier B (en plus des filtres globaux).
+  Cela permet d'exclure différentes lignes selon le calcul.
+
+SAUVEGARDE / CHARGEMENT DE CONFIGURATION
+-----------------------------------------
+  - En étape 3 : bouton "Sauvegarder la configuration" génère
+    un fichier .json avec tous vos paramètres.
+  - En étape 1 : section "Charger une configuration" permet
+    d'importer ce .json et de passer directement au résultat.
+  - Utile pour répéter le même traitement chaque mois avec de
+    nouveaux fichiers.
+
+ÉTAPE 4 — RÉSULTAT
+-------------------
+  - Tableau complet avec les lignes du fichier A, les colonnes
+    sélectionnées et les colonnes spéciales calculées.
+  - Lignes sans correspondance surlignées en jaune.
+  - Téléchargement en Excel (.xlsx) avec plusieurs onglets :
+      • Résultat (toutes les lignes)
+      • Sans correspondance
+      • Exclusions B (lignes exclues du fichier B)
+  - Téléchargement en CSV.
+  - Sauvegarde de la configuration depuis le résultat.
+
+──────────────────────────────────────────────────────────────────
+2. LETTRAGE
+──────────────────────────────────────────────────────────────────
+
+OBJECTIF
+--------
+Attribuer des codes de lettrage communs (A, A / B, B / ...) aux
+lignes qui se correspondent entre deux sources, à la manière du
+lettrage comptable. Chaque groupe de lignes correspondantes reçoit
+le même code (A, B, C, ... ou 0001, 0002, ...).
+
+ÉTAPE 1 — IMPORT
+----------------
+Même principe que le Réconciliateur :
+  - Deux fichiers Excel séparés, ou
+  - Un fichier Excel multi-feuilles avec sélection des feuilles.
+
+ÉTAPE 2 — CRITÈRES DE CORRESPONDANCE
+--------------------------------------
+Définissez un ou plusieurs critères. Deux lignes sont lettrées
+ensemble si TOUS les critères sont vérifiés (logique ET).
+
+  Pour chaque critère :
+    - Colonne dans A et colonne correspondante dans B.
+    - Type de correspondance :
+        • exact : valeurs identiques (optionnel : respecter casse)
+        • contient (A dans B) : la valeur de A est contenue dans B
+        • contient (B dans A) : la valeur de B est contenue dans A
+        • numérique exact : égalité numérique stricte
+        • numérique tolérance % : |A-B|/A ≤ tolérance %
+          (utile pour les montants avec arrondi)
+        • numérique tolérance abs : |A-B| ≤ tolérance absolue
+
+  Un test rapide en temps réel montre si les premières valeurs
+  de chaque colonne se correspondent.
+
+EXEMPLE DE CRITÈRES MULTIPLES
+  Critère 1 : Référence A = Référence B (exact)
+  Critère 2 : Montant A ≈ Montant B (tolérance 1%)
+  → Seules les lignes qui correspondent sur les DEUX critères
+    reçoivent le même code de lettrage.
+
+ÉTAPE 3 — OPTIONS DE LETTRAGE
+-------------------------------
+  - Nom de la colonne de lettrage : le nom de la nouvelle colonne
+    ajoutée à chaque source (ex : "Lettrage", "Code", "Ref").
+  - Format des codes :
+      • Alphabétique : A, B, ..., Z, AA, AB, ...
+      • Numérique : 0001, 0002, 0003, ...
+  - Préfixe : ajouté devant chaque code (ex : "LT-" → LT-A, LT-B)
+  - Mode 1-à-1 : chaque ligne B ne peut être lettrée qu'une fois.
+    Si décoché, une ligne B peut être associée à plusieurs lignes A.
+  - Marqueur pour non-lettrés : texte pour les lignes sans match
+    (laisser vide = cellule vide, ex : "NL", "—").
+  - Colonnes de sortie : choisissez quelles colonnes de A et B
+    apparaissent dans le résultat.
+
+ÉTAPE 4 — RÉSULTAT
+-------------------
+  - Statistiques : nombre de groupes, lignes lettrées, non-lettrées.
+  - Trois onglets :
+      • Feuille A lettrée
+      • Feuille B lettrée
+      • Vue combinée : les deux sources triées par code de lettrage
+        (pratique pour vérifier les correspondances visuellement)
+  - Téléchargement Excel avec les 3 onglets.
+  - Téléchargement CSV séparé pour A et B.
+
+──────────────────────────────────────────────────────────────────
+3. CONSEILS PRATIQUES
+──────────────────────────────────────────────────────────────────
+
+RÉCONCILIATEUR
+  - Commencez toujours par vérifier l'aperçu des valeurs clés
+    pour vous assurer que les colonnes choisies contiennent bien
+    les mêmes types de données.
+  - Utilisez le match normal (contient) si vos références sont
+    incluses dans des libellés plus longs.
+  - Sauvegardez votre configuration après chaque paramétrage
+    réussi pour pouvoir la réutiliser le mois suivant.
+  - Utilisez les filtres d'exclusion pour écarter les lignes
+    d'extourne, d'à-nouveau ou de correction avant le traitement.
+
+LETTRAGE
+  - Pour un lettrage comptable classique (rapprochement bancaire),
+    utilisez 2 critères : référence + montant avec tolérance.
+  - Le mode 1-à-1 est recommandé pour les écritures de débit/crédit
+    où chaque écriture ne doit être lettrée qu'une seule fois.
+  - La vue combinée est idéale pour exporter le résultat à présenter
+    en révision ou en audit.
+
+FORMATS DE FICHIERS
+  - Formats acceptés : .xlsx et .xls
+  - La première feuille est lue par défaut (mode 2 fichiers).
+  - En mode multi-feuilles, vous choisissez la feuille.
+  - Les en-têtes doivent être sur la première ligne.
+  - Les colonnes vides ou les lignes vides en début de fichier
+    peuvent causer des erreurs — nettoyez-les avant import.
+
+══════════════════════════════════════════════════════════════════
+                         FIN DU MANUEL
+══════════════════════════════════════════════════════════════════
