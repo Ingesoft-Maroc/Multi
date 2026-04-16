@@ -62,6 +62,7 @@ with st.sidebar:
 
     tools = {
         "reconciler": ("🔗", "Réconciliateur"),
+        "lettrage":   ("🏷️", "Lettrage"),
     }
 
     for key, (icon, label) in tools.items():
@@ -69,31 +70,75 @@ with st.sidebar:
             st.session_state.active_tool = key
 
     st.markdown("---")
+    if st.button("📖 Manuel d'utilisation", key="nav_manual", use_container_width=True):
+        st.session_state.active_tool = "manual"
+
     if st.session_state.active_tool:
         if st.button("🏠 Accueil", use_container_width=True):
             st.session_state.active_tool = None
 
 # ---------- Main content ----------
 if st.session_state.active_tool is None:
-    # Home page
     st.markdown('<p class="hero-title">⚡ HeroTool</p>', unsafe_allow_html=True)
     st.markdown('<p class="hero-subtitle">Votre boîte à outils pour les tâches répétitives</p>', unsafe_allow_html=True)
     st.markdown("---")
 
     st.markdown("### Choisissez un outil :")
     col1, col2, col3 = st.columns(3)
+
     with col1:
         st.markdown("""
         <div class="tool-card">
             <h3>🔗 Réconciliateur</h3>
-            <p style="color:#9ca3af;">Rapprochez deux fichiers Excel en quelques clics.
-            Choisissez vos colonnes clés et configurez la sortie.</p>
+            <p style="color:#9ca3af;">Rapprochez deux sources Excel avec matching avancé,
+            colonnes calculées, conditions et sauvegarde de configuration.</p>
         </div>
         """, unsafe_allow_html=True)
         if st.button("Ouvrir →", key="open_reconciler"):
             st.session_state.active_tool = "reconciler"
             st.rerun()
 
+    with col2:
+        st.markdown("""
+        <div class="tool-card">
+            <h3>🏷️ Lettrage</h3>
+            <p style="color:#9ca3af;">Attribuez des codes de lettrage (A/A, B/B...)
+            aux lignes correspondantes entre deux feuilles selon vos critères.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("Ouvrir →", key="open_lettrage"):
+            st.session_state.active_tool = "lettrage"
+            st.rerun()
+
+    with col3:
+        st.markdown("""
+        <div class="tool-card">
+            <h3>📖 Manuel</h3>
+            <p style="color:#9ca3af;">Guide complet d'utilisation de HeroTool
+            avec exemples et conseils pratiques.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("Lire →", key="open_manual"):
+            st.session_state.active_tool = "manual"
+            st.rerun()
+
 elif st.session_state.active_tool == "reconciler":
     from tools.reconciler import run_reconciler
     run_reconciler()
+
+elif st.session_state.active_tool == "lettrage":
+    from tools.lettrage import run_lettrage
+    run_lettrage()
+
+elif st.session_state.active_tool == "manual":
+    st.markdown("## 📖 Manuel d'utilisation — HeroTool")
+    st.markdown("---")
+    try:
+        with open("MANUEL.txt", "r", encoding="utf-8") as f:
+            content = f.read()
+        st.text_area("", value=content, height=700, label_visibility="collapsed")
+        with open("MANUEL.txt", "rb") as f:
+            st.download_button("⬇️ Télécharger le manuel (.txt)", f.read(),
+                               "MANUEL_HeroTool.txt", "text/plain")
+    except FileNotFoundError:
+        st.error("Fichier MANUEL.txt introuvable.")
