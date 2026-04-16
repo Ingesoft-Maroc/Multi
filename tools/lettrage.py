@@ -345,30 +345,30 @@ def run_lettrage():
         with c1:
             col_name = st.text_input("Nom de la colonne de lettrage",
                                      value=st.session_state.get("let_col_name", "Lettrage"),
-                                     key="let_col_name_input")
+                                     key="let_col_name_w")
             fmt = st.radio("Format des codes",
                            ["alphabétique (A, B, AA, AB...)", "numérique (0001, 0002...)"],
-                           key="let_fmt")
+                           key="let_fmt_w")
             prefix = st.text_input("Préfixe (optionnel)", value=st.session_state.get("let_prefix", ""),
-                                   key="let_prefix_input", placeholder="ex : LT-, 2024-")
+                                   key="let_prefix_w", placeholder="ex : LT-, 2024-")
         with c2:
             one_to_one = st.checkbox(
                 "Mode 1-à-1 (chaque ligne B ne peut être lettrée qu'une seule fois)",
                 value=st.session_state.get("let_one_to_one", True),
-                key="let_one_to_one_chk",
+                key="let_one_to_one_w",
                 help="Si décoché, une même ligne B peut être associée à plusieurs lignes A (1-à-plusieurs)."
             )
             unmatched_marker = st.text_input(
                 "Marqueur pour les non-lettrés (laisser vide = cellule vide)",
                 value=st.session_state.get("let_unmatched", ""),
-                key="let_unmatched_input",
+                key="let_unmatched_w",
                 placeholder="ex : NL, ?, —"
             )
             st.markdown("**Colonnes à inclure dans la sortie**")
             cols_a_out = st.multiselect(f"Colonnes de {name_a}", list(df_a.columns),
-                                        default=list(df_a.columns), key="let_cols_a_out")
+                                        default=list(df_a.columns), key="let_cols_a_out_w")
             cols_b_out = st.multiselect(f"Colonnes de {name_b}", list(df_b.columns),
-                                        default=list(df_b.columns), key="let_cols_b_out")
+                                        default=list(df_b.columns), key="let_cols_b_out_w")
 
         st.markdown("")
         c1, c2 = st.columns([1, 5])
@@ -377,15 +377,13 @@ def run_lettrage():
                 st.session_state["let_step"] = 2; st.rerun()
         with c2:
             if st.button("Lettrer →", type="primary"):
-                st.session_state.update({
-                    "let_col_name": col_name,
-                    "let_fmt": "numérique" if "numérique" in fmt else "alphabétique",
-                    "let_prefix": prefix,
-                    "let_one_to_one": one_to_one,
-                    "let_unmatched": unmatched_marker,
-                    "let_cols_a_out": cols_a_out,
-                    "let_cols_b_out": cols_b_out,
-                })
+                st.session_state["let_col_name"] = col_name
+                st.session_state["let_fmt"] = "numérique" if "numérique" in fmt else "alphabétique"
+                st.session_state["let_prefix"] = prefix
+                st.session_state["let_one_to_one"] = one_to_one
+                st.session_state["let_unmatched"] = unmatched_marker
+                st.session_state["let_cols_a_out"] = cols_a_out
+                st.session_state["let_cols_b_out"] = cols_b_out
                 st.session_state["let_step"] = 4; st.rerun()
 
     # ══════════════════════════════════════════
