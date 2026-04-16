@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import json
 
 
 # ─────────────────────────────────────────────
@@ -27,6 +28,22 @@ def get_sheets(file_bytes):
 def reset_lettrage():
     for k in [k for k in st.session_state if k.startswith("let_")]:
         del st.session_state[k]
+
+
+LET_CONFIG_KEYS = [
+    "let_criteria", "let_col_name", "let_fmt", "let_prefix",
+    "let_one_to_one", "let_unmatched", "let_cols_a_out", "let_cols_b_out",
+]
+
+def export_let_config():
+    cfg = {k.replace("let_", ""): st.session_state.get(k) for k in LET_CONFIG_KEYS}
+    return json.dumps(cfg, ensure_ascii=False, indent=2)
+
+def import_let_config(cfg: dict):
+    for k in LET_CONFIG_KEYS:
+        short = k.replace("let_", "")
+        if short in cfg:
+            st.session_state[k] = cfg[short]
 
 
 def step_badge(n, label, active):
@@ -226,6 +243,22 @@ def run_lettrage():
                 st.caption(f"{len(df_b)} lignes · {len(df_b.columns)} colonnes")
                 with st.expander("Aperçu"):
                     st.dataframe(df_b.head(5), use_container_width=True)
+            # ── Charger une configuration ─────
+            st.markdown("---")
+            with st.expander("📂 Charger une configuration sauvegardée", expanded=False):
+                st.caption("Importez un fichier .json généré par HeroTool Lettrage pour restaurer tous vos paramètres.")
+                cfg_file = st.file_uploader("Configuration (.json)", type=["json"],
+                                            key="let_cfg_upload", label_visibility="collapsed")
+                if cfg_file:
+                    try:
+                        cfg = json.load(cfg_file)
+                        if st.button("✅ Appliquer cette configuration", type="primary"):
+                            import_let_config(cfg)
+                            st.session_state["let_step"] = 4
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Impossible de lire la configuration : {e}")
+
             st.markdown("")
             if st.button("Suivant →", type="primary"):
                 if "let_criteria" not in st.session_state:
@@ -370,6 +403,19 @@ def run_lettrage():
             cols_b_out = st.multiselect(f"Colonnes de {name_b}", list(df_b.columns),
                                         default=list(df_b.columns), key="let_cols_b_out_w")
 
+        # ── Sauvegarde config ─────────────────
+        st.markdown("---")
+        if st.session_state.get("let_criteria"):
+            st.session_state["let_col_name"] = col_name
+            st.session_state["let_fmt"] = "numérique" if "numérique" in fmt else "alphabétique"
+            st.session_state["let_prefix"] = prefix
+            st.session_state["let_one_to_one"] = one_to_one
+            st.session_state["let_unmatched"] = unmatched_marker
+            st.session_state["let_cols_a_out"] = cols_a_out
+            st.session_state["let_cols_b_out"] = cols_b_out
+            st.download_button("💾 Sauvegarder la configuration", data=export_let_config(),
+                               file_name="herotool_lettrage_config.json", mime="application/json")
+
         st.markdown("")
         c1, c2 = st.columns([1, 5])
         with c1:
@@ -443,15 +489,15 @@ def run_lettrage():
 
         # ── Téléchargement ────────────────────
         st.markdown("---")
-        dc1, dc2, dc3 = st.columns(3)
+        dc1, dc2, dc3, dc4 = st.columns(4)
 
         with dc1:
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
                 result_a[[col_name] + [c for c in result_a.columns if c != col_name]].to_excel(
-                    writer, index=False, sheet_name=f"Lettrage A")
+                    writer, index=False, sheet_name="Lettrage A")
                 result_b[[col_name] + [c for c in result_b.columns if c != col_name]].to_excel(
-                    writer, index=False, sheet_name=f"Lettrage B")
+                    writer, index=False, sheet_name="Lettrage B")
                 combined.to_excel(writer, index=False, sheet_name="Vue combinée")
             st.download_button("⬇️ Télécharger (.xlsx)", buf.getvalue(),
                                "lettrage_result.xlsx",
@@ -463,6 +509,9 @@ def run_lettrage():
         with dc3:
             csv_b = result_b.to_csv(index=False).encode("utf-8-sig")
             st.download_button("⬇️ CSV Feuille B", csv_b, "lettrage_B.csv", "text/csv")
+        with dc4:
+            st.download_button("💾 Sauvegarder config", export_let_config(),
+                               "herotool_lettrage_config.json", "application/json")
 
         st.markdown("")
         c1, c2 = st.columns([1, 5])
