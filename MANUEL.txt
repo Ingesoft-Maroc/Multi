@@ -1,5 +1,5 @@
 ══════════════════════════════════════════════════════════════════
-                    MANUEL D'UTILISATION — HeroTool
+      MANUEL D'UTILISATION — HeroTool - CHERDOUDI Mohamed
 ══════════════════════════════════════════════════════════════════
 
 HeroTool est une boîte à outils pour les tâches répétitives sur
